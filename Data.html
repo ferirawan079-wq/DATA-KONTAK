@@ -1,0 +1,208 @@
+<!doctype html>
+
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Data Nama & Nomor WA (Owner)</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    body{background:#f3f4f6; margin:0; padding:24px; color:#0f172a}
+    .card{max-width:920px;margin:0 auto;background:white;border-radius:12px;padding:18px;box-shadow:0 6px 18px rgba(2,6,23,0.08)}
+    h1{margin:0 0 6px;font-size:20px}
+    p.lead{margin:0 0 14px;color:#475569}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    label{display:block;font-size:13px;margin-bottom:6px}
+    input[type=text],input[type=password]{width:100%;padding:8px;border:1px solid #e6eef6;border-radius:8px}
+    button{padding:8px 12px;border-radius:8px;border:0;background:#0ea5a4;color:white;cursor:pointer}
+    .btn-ghost{background:transparent;color:#0f172a;border:1px solid #e2e8f0}
+    .small{font-size:13px;color:#475569}
+    .list{max-height:360px;overflow:auto;padding:6px;border-radius:8px;border:1px solid #eef2ff}
+    .item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:8px;background:#ffffff;margin-bottom:8px;border:1px solid #f1f5f9}
+    .meta{font-size:13px;color:#0f172a}
+    .actions a{margin-right:8px;text-decoration:underline;color:#0ea5a4}
+    .danger{background:#ef4444}
+    footer{font-size:12px;color:#64748b;margin-top:12px}
+    @media(max-width:800px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Data Nama & Nomor WA</h1>
+    <p class="lead">Simpan nama + nomor WhatsApp. Siapa saja dapat tambah & lihat. Hanya owner yang dapat menghapus.</p><div class="grid">
+  <div>
+    <h3>Tambah Kontak</h3>
+    <form id="addForm">
+      <label>Nama</label>
+      <input type="text" id="nameInput" placeholder="Nama lengkap" required />
+      <label style="margin-top:8px">Nomor WA</label>
+      <input type="text" id="waInput" placeholder="Contoh: +628123456789 atau 08123456789" required />
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button type="submit">Tambah</button>
+        <button type="button" id="exportBtn" class="btn-ghost">Export JSON</button>
+        <button type="button" id="clearAllBtn" class="btn-ghost" title="Hanya owner yang bisa menghapus semua">Hapus Semua</button>
+      </div>
+    </form>
+
+    <div style="margin-top:16px">
+      <h3>Owner / Login</h3>
+      <div id="ownerArea"></div>
+    </div>
+  </div>
+
+  <div>
+    <h3>Kontak Tersimpan</h3>
+    <div id="list" class="list"><div class="small">Memuat...</div></div>
+  </div>
+</div>
+
+<footer>Catatan: File ini menyimpan data di browser (localStorage). Untuk penggunaan multi-user/permanen, gunakan backend + database.</footer>
+
+  </div>  <script>
+    // Keys
+    const CONTACTS_KEY = 'wa_contacts_html_v1';
+    const OWNER_KEY = 'wa_owner_html_v1';
+
+    // helpers
+    const byId = id => document.getElementById(id);
+
+    // crypto helper to hash password (SHA-256) -> hex
+    async function hashHex(str){
+      const enc = new TextEncoder();
+      const data = enc.encode(str);
+      const digest = await crypto.subtle.digest('SHA-256', data);
+      const arr = Array.from(new Uint8Array(digest));
+      return arr.map(b => b.toString(16).padStart(2,'0')).join('');
+    }
+
+    function loadContacts(){
+      try{ const raw = localStorage.getItem(CONTACTS_KEY); return raw? JSON.parse(raw): [] }catch(e){return []}
+    }
+    function saveContacts(list){ localStorage.setItem(CONTACTS_KEY, JSON.stringify(list)) }
+
+    function loadOwner(){
+      try{ const raw = localStorage.getItem(OWNER_KEY); return raw? JSON.parse(raw): null }catch(e){return null}
+    }
+    function saveOwner(obj){ localStorage.setItem(OWNER_KEY, JSON.stringify(obj)) }
+
+    // phone validation: allow digits, +, spaces, parentheses, dashes
+    function validPhone(p){
+      if(!p) return false;
+      const cleaned = p.replace(/[\s()\-]/g,'');
+      return /^[+0-9]{6,20}$/.test(cleaned);
+    }
+
+    // UI state
+    let contacts = loadContacts();
+    let owner = loadOwner();
+    let loggedIn = false;
+
+    // render owner area
+    function renderOwnerArea(){
+      const container = byId('ownerArea');
+      container.innerHTML = '';
+      if(!owner){
+        const html = document.createElement('div');
+        html.innerHTML = `
+          <div class="small">Belum ada owner — buat satu kali untuk bisa menghapus.</div>
+          <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <input type="text" id="ownerName" placeholder="Nama owner" />
+            <input type="password" id="ownerPass" placeholder="Password (min 4)" />
+            <input type="password" id="ownerPass2" placeholder="Konfirmasi password" />
+            <button id="createOwnerBtn">Buat Owner</button>
+          </div>
+        `;
+        container.appendChild(html);
+        byId('createOwnerBtn').addEventListener('click', async ()=>{
+          const n = byId('ownerName').value.trim();
+          const p = byId('ownerPass').value;
+          const p2 = byId('ownerPass2').value;
+          if(!n) return alert('Masukkan nama owner.');
+          if(p.length < 4) return alert('Password minimal 4 karakter.');
+          if(p !== p2) return alert('Konfirmasi password tidak cocok.');
+          const hash = await hashHex(p);
+          owner = { name: n, passHash: hash, createdAt: new Date().toISOString() };
+          saveOwner(owner);
+          alert('Owner dibuat: ' + n + '. Simpan password Anda.');
+          renderOwnerArea();
+          renderList();
+        });
+        return;
+      }
+
+      // if owner exists
+      const html = document.createElement('div');
+      html.innerHTML = `
+        <div class="small">Owner: <strong>${owner.name}</strong> ${loggedIn? '(logged in)':''}</div>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <input type="password" id="loginPass" placeholder="Password owner" />
+          <button id="loginBtn">Login</button>
+          <button id="logoutBtn" class="btn-ghost">Logout</button>
+        </div>
+      `;
+      container.appendChild(html);
+      byId('loginBtn').addEventListener('click', async ()=>{
+        const p = byId('loginPass').value;
+        const h = await hashHex(p || '');
+        if(h === owner.passHash){ loggedIn = true; alert('Login berhasil sebagai owner: ' + owner.name); renderOwnerArea(); renderList(); }
+        else alert('Password salah');
+      });
+      byId('logoutBtn').addEventListener('click', ()=>{ loggedIn = false; alert('Logout'); renderOwnerArea(); renderList(); });
+    }
+
+    // render list
+    function renderList(){
+      const list = byId('list');
+      list.innerHTML = '';
+      contacts = loadContacts();
+      if(contacts.length === 0){ list.innerHTML = '<div class="small">Belum ada kontak.</div>'; return }
+      contacts.forEach(c =>{
+        const el = document.createElement('div'); el.className='item';
+        const left = document.createElement('div'); left.innerHTML = `<div class="meta"><strong>${escapeHtml(c.name)}</strong></div><div class="small">${escapeHtml(c.wa)}</div>`;
+        const right = document.createElement('div'); right.className='actions';
+        const chat = document.createElement('a'); chat.href = 'https://wa.me/' + c.wa.replace(/[^0-9+]/g,''); chat.target='_blank'; chat.textContent='Chat';
+        right.appendChild(chat);
+        if(loggedIn){
+          const del = document.createElement('button'); del.className='btn-ghost'; del.textContent='Hapus'; del.style.marginLeft='8px';
+          del.addEventListener('click', ()=>{ if(confirm('Hapus data ini?')){ contacts = contacts.filter(x=>x.id!==c.id); saveContacts(contacts); renderList(); } });
+          right.appendChild(del);
+        }
+        el.appendChild(left); el.appendChild(right); list.appendChild(el);
+      });
+    }
+
+    // escape html
+    function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+
+    // form handlers
+    byId('addForm').addEventListener('submit', function(e){
+      e.preventDefault();
+      const name = byId('nameInput').value.trim();
+      const wa = byId('waInput').value.trim();
+      if(!name) return alert('Masukkan nama.');
+      if(!wa) return alert('Masukkan nomor WA.');
+      if(!validPhone(wa)) return alert('Format nomor WA tidak valid. Contoh: +628123... atau 08123...');
+      const item = { id: Date.now().toString(), name, wa, addedAt: new Date().toISOString() };
+      contacts.unshift(item); saveContacts(contacts); byId('nameInput').value=''; byId('waInput').value=''; renderList();
+    });
+
+    // export
+    byId('exportBtn').addEventListener('click', ()=>{
+      const data = JSON.stringify(loadContacts(), null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'contacts_' + new Date().toISOString().slice(0,10) + '.json'; a.click(); URL.revokeObjectURL(url);
+    });
+
+    // clear all (owner only)
+    byId('clearAllBtn').addEventListener('click', ()=>{
+      if(!loggedIn) return alert('Hanya owner yang bisa menghapus semua data.');
+      if(!confirm('Hapus SEMUA kontak? Tindakan ini tidak bisa dikembalikan.')) return;
+      contacts = []; saveContacts(contacts); renderList();
+    });
+
+    // initial render
+    renderOwnerArea(); renderList();
+
+  </script></body>
+</html>
